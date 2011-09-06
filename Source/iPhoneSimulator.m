@@ -33,6 +33,20 @@
 #import "iPhoneSimulator.h"
 #import "nsprintf.h"
 
+
+// Converts 'path' to an absolute path (unless it's nil). DTiPhoneSimulator expects full paths.
+static NSString* expandPath(NSString* path) {
+    if (path == nil)
+        return nil;
+    else if ([path isAbsolutePath]) {
+        return [path stringByStandardizingPath];
+    } else {
+        NSString *cwd = [[NSFileManager defaultManager] currentDirectoryPath];
+        return [[cwd stringByAppendingPathComponent:path] stringByStandardizingPath];
+    }
+}
+
+
 /**
  * A simple iPhoneSimulatorRemoteClient framework.
  */
@@ -104,6 +118,7 @@
 	NSError *error;
 
 	/* Create the app specifier */
+    path = expandPath(path);
 	appSpec = [DTiPhoneSimulatorApplicationSpecifier specifierWithApplicationPath:path];
 	if (appSpec == nil) {
 		nsprintf(@"Could not load application specification for %@", path);
@@ -128,10 +143,10 @@
 
 	/* redirect stderr, maybe this could be in a cli option? */
 	if (sessionStderr) {
-		[config setSimulatedApplicationStdErrPath:sessionStderr];
+		[config setSimulatedApplicationStdErrPath:expandPath(sessionStderr)];
 	}
 	if (sessionStdout) {
-		[config setSimulatedApplicationStdOutPath:sessionStdout];
+		[config setSimulatedApplicationStdOutPath:expandPath(sessionStdout)];
 	}
 	
 	// this was introduced in 3.2 of SDK
@@ -178,7 +193,7 @@
  */
 - (void)runWithArgc:(int)argc argv:(char **)argv {
 	// Foundation way to parse args
-	NSUserDefaults *args = [NSUserDefaults standardUserDefaults];
+    NSDictionary* options = [[NSUserDefaults standardUserDefaults] volatileDomainForName: NSArgumentDomain];
 
 	/* Read the command */
 	char *cmd = nil;
@@ -186,7 +201,7 @@
 
 	for (int i=1; i < argc; i++) {
 		// first non option argument is the command
-		if (argv[i][0] != '-') {
+		if (argv[i][0] != '-' && (i==1 || argv[i-1][0] != '-')) {
 			cmd = argv[i];
 			cmdIdx = i;	
 			break;		
@@ -198,9 +213,10 @@
 	}
 	
 	// debug option (launch gdb)
-	debug = [args boolForKey:@"debug"];
-	sessionStderr = [args stringForKey:@"stderr"];
-	sessionStdout = [args stringForKey:@"stdout"];
+    NSString* debugOpt = [options objectForKey:@"debug"];
+	debug = debugOpt && ![debugOpt isEqualToString: @"NO"];
+	sessionStderr = [options objectForKey:@"stderr"];
+	sessionStdout = [options objectForKey:@"stdout"];
 	
 	if (strcmp(cmd, "showsdks") == 0) {
 		exit([self showSDKs]);
@@ -211,7 +227,7 @@
 			[self printUsage];
 			exit(EXIT_FAILURE);
 		}
-		NSString* ver = [args stringForKey:@"sdkVersion"];
+		NSString* ver = [options objectForKey:@"sdkVersion"];
 		if (ver) {
 			NSArray *roots = [DTiPhoneSimulatorSystemRoot knownRoots];
 			for (DTiPhoneSimulatorSystemRoot *root in roots) {
@@ -224,7 +240,7 @@
 			}
 			if (sdkRoot == nil)
 			{
-				fprintf(stderr,"Unknown or unsupported SDK version: %s\n",ver);
+				fprintf(stderr,"Unknown or unsupported SDK version: %s\n",[ver UTF8String]);
 				[self showSDKs];
 				exit(EXIT_FAILURE);
 			}
@@ -233,7 +249,9 @@
 		}
 
 		/* Don't exit, adds to runloop */
-		[self launchApp:[NSString stringWithUTF8String:argv[cmdIdx+1]] withFamily:[args stringForKey:@"family"] uuid:[args stringForKey:@"uuid"]];
+		[self launchApp:[NSString stringWithUTF8String:argv[cmdIdx+1]] 
+             withFamily:[options objectForKey:@"family"] 
+                   uuid:[options objectForKey:@"uuid"]];
 	} else {
 		fprintf(stderr, "Unknown command: '%s'\n", cmd);
 		[self printUsage];
